@@ -3,17 +3,20 @@ package doktuhparadox.wordcounter;
 import org.apache.commons.cli.*;
 
 import javax.swing.JFileChooser;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.lang.reflect.Type;
 import java.util.*;
+import java.util.function.ToIntFunction;
 
 import static doktuhparadox.wordcounter.Main.Flag.*;
 
 public class Main {
 
-    static enum Flag {
+    enum Flag {
         ALL_WORDS("all"),
         SPECIFIC_WORDS("w"),
         FILE_DIRECTORY_INPUTTED("f"),
@@ -38,13 +41,22 @@ public class Main {
 
         options.addOption(ALL_WORDS.flagString(), false, "Search for all words. Ignores -w.");
         options.addOption(SPECIFIC_WORDS.flagString(), true, "List wordsAndOccurrences for which to search. Separated by commas.");
-        options.addOption(FILE_DIRECTORY_INPUTTED.flagString(), true, "Designate the input file.");
+        options.addOption(FILE_DIRECTORY_INPUTTED.flagString(), true, "Designate the input file. Ignores -fc.");
         options.addOption(FILE_DIRECTORY_SELECTED.flagString(), false, "Use a file chooser to select the input file instead of inputting the directory.");
         options.addOption(CUSTOM_DELIMITING_REGEX.flagString(), true, "Specify a custom stripping regex.");
 
         try {
             CommandLine cmd = parser.parse(options, args);
-            File f = getInputFile(cmd);
+            Optional<File> fileOptional = getInputFile(cmd);
+            File f;
+
+            if (fileOptional.isPresent()) {
+                f = fileOptional.get();
+            } else {
+                System.out.println("Missing information: -f or non-null -fc required.");
+                return;
+            }
+
             String[] words = readInput(f);
 
             if (cmd.hasOption(ALL_WORDS.flagString())) {
@@ -52,30 +64,34 @@ public class Main {
             } else if (cmd.hasOption(SPECIFIC_WORDS.flagString())) {
                 wordsAndOccurrences = countWords(words, cmd.getOptionValue(SPECIFIC_WORDS.flagString()).split(","));
             } else {
-                wordsAndOccurrences = null;
+                System.out.println("Missing information: -all or -w required.");
+                return;
             }
 
             if (wordsAndOccurrences != null) {
                 wordsAndOccurrences.forEach((word, countMap) -> {
                     Collection<Integer> countValues = countMap.values();
                     System.out.printf("-> %s:%n", word);
-                    OptionalInt minOp = countValues.stream().mapToInt(i -> i).min(),
-                            maxOp = countValues.stream().mapToInt(i -> i).max();
                     countMap.forEach((chapter, numOccurrences) -> {
                         System.out.printf("--> Chapter %s: %s occurrences", chapter, numOccurrences);
-                        if (minOp.isPresent() && maxOp.isPresent()) {
-                            int min = minOp.getAsInt(),
-                                max = maxOp.getAsInt();
-
-                            if (min != max) {
-                                if (numOccurrences == min) System.out.print(" (-)");
-                                if (numOccurrences == max) System.out.print(" (+)");
-                            }
-                        }
                         System.out.printf("%n");
                     });
                     System.out.printf("-> Total: %s ", countValues.stream().mapToInt(i -> i).sum());
-                    countValues.stream().mapToInt(i -> i).average().ifPresent(d -> System.out.printf("(average %s) ", Math.round(d)));
+
+                    System.out.print("(");
+                    countValues.stream()
+                            .mapToInt(i -> i)
+                            .min()
+                            .ifPresent(i -> System.out.printf("min: %s, ", i));
+                    countValues.stream()
+                            .mapToInt(i -> i)
+                            .max()
+                            .ifPresent(i -> System.out.printf("max: %s, ", i));
+                    countValues.stream()
+                            .mapToInt(i -> i)
+                            .average()
+                            .ifPresent(d -> System.out.printf("average: %s", Math.round(d)));
+                    System.out.print(") ");
                     System.out.printf("occurrences.%n%n");
                 });
             }
@@ -84,21 +100,23 @@ public class Main {
         }
     }
 
-    private static File getInputFile(CommandLine cmd) {
-        File f = null;
-
+    private static Optional<File> getInputFile(CommandLine cmd) {
         if (cmd.hasOption(FILE_DIRECTORY_INPUTTED.flagString())) {
-            f = new File(cmd.getOptionValue(FILE_DIRECTORY_INPUTTED.flagString()));
+            File f = new File(cmd.getOptionValue(FILE_DIRECTORY_INPUTTED.flagString()));
             if (!f.exists()) System.out.println("Given input file does not exist.");
+            return Optional.of(f);
         } else if (cmd.hasOption(FILE_DIRECTORY_SELECTED.flagString())) {
             JFileChooser jFileChooser = new JFileChooser();
+            jFileChooser.addChoosableFileFilter(new FileNameExtensionFilter(null, "txt"));
             int confirm = jFileChooser.showDialog(null, "Select");
             if (confirm == JFileChooser.APPROVE_OPTION) {
-                f = jFileChooser.getSelectedFile();
+                return Optional.of(jFileChooser.getSelectedFile());
+            } else {
+                return Optional.empty();
             }
         }
 
-        return f;
+        return Optional.empty();
     }
 
     private static String[] readInput(File f) throws IOException {
